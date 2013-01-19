@@ -27,16 +27,14 @@
 /*
  * This code cointains contributions by:
  *	- Martin Klaus <klausm@in.tum.de> (rec_monthly type by given weekday in month)
- *  - Ingo Renner <ingo@ingo-renner.com> (lots of bug fixes and the icon sets)
- *
- * This code is formatted using the PHPEclipse Formatting function.
+ *  	- Ingo Renner <ingo@ingo-renner.com> (lots of bug fixes and the icon sets)
+ *	- Sergey Alexandrov <serg@alexandrov.us> (Typo3 DBAL, PHP 5.3, and bug fixes)
  */
 
 /** 
  * Plugin 'Extended Calendar' for the 'calendar' extension.
  *
  * @author	Alexander Langer <alex@big.endian.de>
- * Sergey: taking care of TYPO3_DB and PHP5.3
  */
 require_once (PATH_tslib."class.tslib_pibase.php");
 
@@ -178,7 +176,6 @@ class tx_calendar_pi1 extends tslib_pibase {
 				$content .= $this->displayMonthFirst();
 				break;
 		}
-		// SERG: return $this->pi_wrapInBaseClass($content);
 		return $this->baseWrap($content);
 	}
 
@@ -715,13 +712,8 @@ class tx_calendar_pi1 extends tslib_pibase {
 		$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where.$whereCats.$whereTarget));
 		
 		/* Now we execute this. */
-		/* XXX BAH! BAH! BAH!  There's a nice Typo3-DB-abstraction and I don't know how to use it.  Fix this!
-		$res = mysql_query(TYPO3_db, $query);
-		 */
-		/* SERG: FIXED */
 		$res = $TYPO3_DB->sql_query($query);
 		/* Now we loop for every result we get. */
-		// SERG: FIXED: while ($row = mysql_fetch_assoc($res)) {
 		while ($row = $TYPO3_DB->sql_fetch_assoc($res)) {
 			/* First, we really need to set this object type to "event" so we later know that is one of ours */
 			$row['calendar_object_type'] = 'event';
@@ -756,8 +748,6 @@ class tx_calendar_pi1 extends tslib_pibase {
 			 */
 			$where = '(eventtype = 5 AND exception_mm='.$row['uid']." AND start_date < $end)";
 			$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where));
-			// $nres = mysql(TYPO3_db, $query);
-			// SERG
 			$nres = $TYPO3_DB->sql_query($query);
 			$ex = array ();
 			while ($arow = mysql_fetch_assoc($nres)) $ex[] = $arow;
@@ -1201,8 +1191,6 @@ class tx_calendar_pi1 extends tslib_pibase {
 			}
 		}
 		
-		// SERG: no needs: mysql_free_result($res);
-		
 		/*
 		 * Now we have all the recurring events in the $theMatrix array.  However, the regular events
 		 * are still missing.  What we do now is, we use a cool SQL query to select all those events for
@@ -1219,7 +1207,6 @@ class tx_calendar_pi1 extends tslib_pibase {
 				  eventtype = 0";
 
 		$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where.$whereCats.$whereTarget));
-		/* SERG: FIX */
 		$res = $TYPO3_DB->sql_query($query);
 		/* Now we can add those events */
 		while ($row = $TYPO3_DB->sql_fetch_assoc($res)) {
