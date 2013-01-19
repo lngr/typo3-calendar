@@ -4,6 +4,7 @@
 *  Copyright notice
 *  
 *  (c) 2004 Alexander Langer <alex@big.endian.de>
+*  (c) 2012 Sergey Alexandrov <serg@alexandrov.us>
 *  All rights reserved
 *
 *  This script is part of the Typo3 project. The Typo3 project is 
@@ -35,6 +36,7 @@
  * Plugin 'Extended Calendar' for the 'calendar' extension.
  *
  * @author	Alexander Langer <alex@big.endian.de>
+ * Sergey: taking care of TYPO3_DB and PHP5.3
  */
 require_once (PATH_tslib."class.tslib_pibase.php");
 
@@ -102,8 +104,12 @@ class tx_calendar_pi1 extends tslib_pibase {
 	var $prefixId = "tx_calendar_pi1"; // Same as class name
 	var $scriptRelPath = "pi1/class.tx_calendar_pi1.php"; // Path to this script relative to the extension dir.
 	var $extKey = "calendar"; // The extension key.
-	var $dbTable = "tx_calendar_item"; // DB Table that holds our events (used for $row)
+	var $dbTable = 'tx_calendar_item'; // DB Table that holds our events (used for $row)
 	var $allowCaching = true;
+	
+	var $pid_list;
+	var $categories = array();
+	var $targetgroups = array();
 
 	/**
 	 * This function is only a wrapper to PHPs strtime() function so that we can use it from Typoscript
@@ -149,6 +155,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 	 */
 	function main($content, $conf) {
 		/* Maybe one specified a Typoscript-Prefix in Flexforms.  go one level into this prefix if so. */
+		
 		$conf = $this->toplevelConfig($conf);
 		$this->initdefaults($content, $conf);
 		$content .= $this->pi_getEditPanel();
@@ -171,9 +178,19 @@ class tx_calendar_pi1 extends tslib_pibase {
 				$content .= $this->displayMonthFirst();
 				break;
 		}
-		return $this->pi_wrapInBaseClass($content);
+		// SERG: return $this->pi_wrapInBaseClass($content);
+		return $this->baseWrap($content);
 	}
 
+	function baseWrap($content)
+    {
+    	if (isset($this->conf['baseWrap.'])) {
+        	return $this->cObj->stdWrap($content,$this->conf['baseWrap.']);
+		} else {
+        	return $this->pi_wrapInBaseClass($content);
+		}
+	}
+		
 	/**
 	 * If a typoscript_prefix is specified, use this one and not the "toplevel" Configuration in $conf that
 	 * we'd use otherwise.  This is quite useful if you want to render different month views with different
@@ -182,9 +199,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 	function toplevelConfig($conf) {
 		/* fetch the prefix.  If it is nonempty, go one level below in the $conf array.  If not, do nothing */
 		$TSprefix = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'typoscript_prefix');
-		if ($TSprefix != "") {
-			$conf = $conf[$TSprefix.'.'];
-		}
+		if ($TSprefix != "") $conf = $conf[$TSprefix.'.'];
 		return $conf;
 	}
 
@@ -195,125 +210,51 @@ class tx_calendar_pi1 extends tslib_pibase {
 	 * Important:  This function is copy&pasted to the corresponding function for targetgroups.
 	 * If you fix any bugs here, please also fix them in loadTargetgroups().
 	 */
-	function loadCategories() {
-		/* first get the SELECT Query in another function */
-		$query = $this->pi_categoriesUsed("tx_calendar_cat");
-		/* select all categories */
-		$res = mysql_query($query);
-		/* XXX I'm pretty sure we sholuld use Typo3's DB abstraction layer here instead! */
-		if (mysql_errno()) {
-			die(mysql_error());
-		}
+	function loadCategories() 
+	{
+		global $TYPO3_DB;
 
-		/* First, select the "Category mode" that is specified in the Flexform configuration */
+		// First, select the "Category mode" that is specified in the Flexform configuration 
 		$catmode = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'categoryMode', 's_category');
+	
+		// This is a comma-separated list of the uids of the categories
+		$ffcatsarray = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'categorySelection', 's_category');
 		
-		/* Now get all those categories that are specified in the FlexForms configuration. */
-		$ffcats = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'categorySelection', 's_category');
+		// Chosen categories
+		$catsWhere = '';
+		if ($catmode == 1) $catsWhere = " AND uid IN ($ffcatsarray)";
+		elseif ($catmode == 2) $catsWhere = " AND uid NOT IN ($ffcatsarray)";
 		
-		/* This is a comma-seperated list of the uids of the cateogires, so we first need to split it into an array */
-		$ffcatsarray = preg_split("/,/", $ffcats);
-
-		/*
-		 * If the Mode is 0, we use all categories, no exception.
-		 * Because our Filter functions rely on the uid of the category set in the $this->categories array,
-		 * we also need to add a dummy item for those events that have no category assigned and thus defaulting
-		 * to the MySQL default value, which is 0.
-		 */
-		if ($catmode == 0) {
-			$this->categories[0] = array ('uid' => 0, 'title' => '[no category]',);
-		}
-
-		/* Now, fetch all the categories. */
-		/* XXX I'm pretty sure, there's a cool database abstraction layer in Typo3 for the mysql function call */
-		while ($row = mysql_fetch_assoc($res)) {
-			/*
-			 * A few words on the catmodes:
-			 * 0 means "include all categores", so we just add them by default
-			 * 1 means "Only the selected categores", so we need to look the uid up in the $ffcatsarray and
-			 *   we may only include it if it is in that array
-			 * 2 means "Dissplay all but those", so we again need to look them up but do NOT include them if they are in this array
-			 */
-			switch ($catmode) {
-				case 0 :
-					/* ok, just add it */
-					$this->categories[$row["uid"]] = $row;
-					break;
-				case 1 :
-					if (in_array($row['uid'], $ffcatsarray)) {
-						$this->categories[$row["uid"]] = $row;
-					}
-					break;
-				case 2 :
-					if (!in_array($row['uid'], $ffcatsarray))
-						$this->categories[$row["uid"]] = $row;
-					break;
-			}
-		}
+		$res = $TYPO3_DB->exec_SELECTgetRows(
+			'*',
+			'tx_calendar_cat',
+			'pid IN ('.$this->pid_list.')'.$catsWhere.$this->cObj->enableFields('tx_calendar_cat')
+		);
+		foreach ($res as $row) $this->categories[$row['uid']] = $row;
 	}
 	
 	
 	/**
-	 * This does the very same for Targetgroups as loadCateogires() does for Categores, so please see there.
+	 * This does the very same for Targetgroups as loadCategories() does for Categories, so please see there.
 	 */
-	function loadTargetgroups() {
-		$query = $this->pi_categoriesUsed("tx_calendar_targetgroup");
-		$res = mysql_query($query);
-		if (mysql_errno()) {
-			die(mysql_error());
-		}
-
+	function loadTargetgroups() 
+	{
+		global $TYPO3_DB;
+		
 		$targetmode = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'targetgroupMode', 's_category');
-		$fftargets = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'targetgroupSelection', 's_category');
-		$fftargetsarray = preg_split("/,/", $fftargets);
-
-		if ($targetmode == 0) {
-			$this->targetgroups[0] = array ('uid' => 0, 'title' => '[no targetgroup]',);
-		}
-
-		while ($row = mysql_fetch_assoc($res)) {
-			switch ($targetmode) {
-				case 0 :
-					// add all
-					$this->targetgroups[$row["uid"]] = $row;
-					break;
-				case 1 :
-					if (in_array($row['uid'], $fftargetsarray)) {
-						$this->targetgroups[$row["uid"]] = $row;
-					}
-					break;
-				case 2 :
-					if (!in_array($row['uid'], $fftargetsarray))
-						$this->targetgroups[$row["uid"]] = $row;
-					break;
-			}
-		}
-	}
-
-
-	/**
-	 * I wanted to use this function to improve rendering of the organizers array, but this part of
-	 * the code is by far not the slowest, so this is just silly.  But hence the bad name.
-	 * 
-	 * One should really rename this function and use proper Typo3 API for the creation of the SELECT query.
-	 * This way it is just stupid.
-	 * A big TODO.
-	 */
-	function pi_organizersUsed($cat_table) {
-		$pidList = $this->getPidlist();
-		$query = "SELECT ".$cat_table.".* "."\n"."FROM $cat_table WHERE $cat_table.pid IN ($pidList)".$this->cObj->enableFields($cat_table)."\n";
-		return $query;
-	}
-	
-	/**
-	 * Same as for pi_organizersUsed.  It's just stupid to have this function.  It's even 1:1 code of the organizers function.
-	 * Go away! Big TODO
-	 */
-	function pi_categoriesUsed($cat_table) {
-		// XXX should be modified to return only categories that are really in use.  
-		$pidList = $this->getPidlist();
-		$query = "SELECT ".$cat_table.".* "."\n"."FROM $cat_table WHERE $cat_table.pid IN ($pidList)".$this->cObj->enableFields($cat_table)."\n";
-		return $query;
+		$fftargetsarray = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'targetgroupSelection', 's_category');
+		
+		// Chosen targets
+		$targsWhere = '';
+		if ($targetmode == 1) $targsWhere = " AND uid IN ($fftargetsarray)";
+		elseif ($targetmode == 2) $targsWhere = " AND uid NOT IN ($fftargetsarray)";
+		
+		$res = $TYPO3_DB->exec_SELECTgetRows(
+			'*',
+			'tx_calendar_targetgroup',
+			'pid IN ('.$this->pid_list.')'.$catsWhere.$this->cObj->enableFields('tx_calendar_targetgroup')
+		);
+		foreach ($res as $row) $this->targetgroups[$row['uid']] = $row;
 	}
 
 	/**
@@ -383,8 +324,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * Also, somehow the 'Upcoming' and 'Event' views don't set these values, so in 1.1.0 they didn't work.  Ooops.
 		 * This is a workaround and should be fixed proberly in a later version.  This is a TODO.
 		 */
-		if ($row['calendar_object_type'] == "")
-			$row['calendar_object_type'] = "event";
+		if ($row['calendar_object_type'] == "")	$row['calendar_object_type'] = "event";
 			
 		/* Now we need to decide what exactly we are going to render */
 		switch ($row['calendar_object_type']) {
@@ -408,10 +348,8 @@ class tx_calendar_pi1 extends tslib_pibase {
 				 */
 				if ($row['end_date'] > 0)
 					$row['event_end'] = $row['end_date'] + $row['end_time'];
-				else if ($row['end_time'] > 0)
-					$row['event_end'] = $row['start_date'] + $row['end_time'];
 				else
-					$row['event_end'] = 0;
+					$row['event_end'] = $row['start_date'] + $row['end_time'];
 					
 				/* Ok, this is just Typo3 API to render the $row as a Content Object specified in $conf['event']. */
 				$eventobj = t3lib_div :: makeInstance('tslib_cObj'); // Create new tslib_cObj for our use
@@ -508,17 +446,17 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * going to display accordingly.  If they are not set, we just use the default, which is the "current" day.
 		 */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f3']))
-			$day = intval($this->piVars['f3']);
+			$day = $this->piVars['f3'];
 		else
 			$day = date('d');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$month = intval($this->piVars['f2']);
+			$month = $this->piVars['f2'];
 		else
 			$month = date('m');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = intval($this->piVars['f1']);
+			$year = $this->piVars['f1'];
 		else
 			$year = date('Y');
 
@@ -710,8 +648,9 @@ class tx_calendar_pi1 extends tslib_pibase {
 	 * Objects can be arbitrary content objects that are loaded by external PHP scripts, configured by Typoscript,
 	 * or our own events.  For our own, we also need to do recurrence calculations.
 	 */
-	function getEventsInRange($fromYear, $fromMonth, $fromDay, $toYear, $toMonth, $toDay) {
-		
+	function getEventsInRange($fromYear, $fromMonth, $fromDay, $toYear, $toMonth, $toDay) 
+	{
+		global $TYPO3_DB;	
 		/* $theMatrix holds all events of this range in an array of arrays of arrays of arrays (year, month, day, events) */
 		$theMatrix = array ();
 		
@@ -725,7 +664,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 			$range = array ("fromYear" => $fromYear, "fromMonth" => $fromMonth, "fromDay" => $fromDay, "toYear" => $toYear, "toMonth" => $toMonth, "toDay" => $toDay,);
 			/* Now call it.  Notice the $o, it's the Typoscript config.  That way you can configure your user function */
 			$theEvents = $this->cObj->callUserFunction($o['getObjectsInRange'], $o, $range);
-			
+
 			/*
 			 * The function has returned an event array.  PHP cannot merge two arrays of depth 4, so we need to do it
 			 * ourselves.
@@ -745,7 +684,8 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		/* Now we fetch our very own objects.  $begin and $end hold the seconds since epoch of the range. */
 		$begin = mktime(0, 0, 0, $fromMonth, $fromDay, $fromYear);
-		$end = mktime(0, 0, 0, $toMonth, $toDay, $toYear);
+		// SERG: we have to include LATESTS events, so ....
+		$end = mktime(23, 59, 59, $toMonth, $toDay, $toYear);
 
 		/*
 		 * We start with the recurring events, which have an eventtype 1-4.  eventtype 0 are regular events, and 5 are
@@ -758,34 +698,33 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 *  b) the start_date of this event is in the future (after $end)
 		 * Interverting this logically leads to the second part of the WHERE clause. 
 		 */
-		$where = "(
-						(
-							rec_end_date = 0
-						OR
-							(
-								rec_end_date >= $begin
-							AND
-								start_date < $end
-							)
-						)
-					AND eventtype < 5 AND eventtype > 0)";
-					
+		$where = "((rec_end_date = 0 OR (rec_end_date >= $begin AND start_date < $end)) AND eventtype < 5 AND eventtype > 0)";
+
+		// SERG: Categories
+		$whereCats = isset($this->piVars['category']) ? ' AND category = '.intval($this->piVars['category']) : ''; 
+		
+		// SERG: Target groups
+		$whereTarget = isset ($this->piVars['targetgroup']) ? ' AND targetgroup = '.intval($this->piVars['targetgroup']) : '';
+		 		
 		/*
 		 * With this $where clause, we are no selecting the events from our db table using Typo3-API.
 		 * The nice thing with getQuery() is, is does all the hidden/start/end stuff for us, so we don't need to
 		 * bother about it.  getSelectConf() adds in some more config for us, e.g. the list of Page-Ids we want to
 		 * fetch events from.  See there for more details.
 		 * */
-		$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where));
+		$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where.$whereCats.$whereTarget));
 		
 		/* Now we execute this. */
-		/* XXX BAH! BAH! BAH!  There's a nice Typo3-DB-abstraction and I don't know how to use it.  Fix this! */
-		$res = mysql_query($query);
+		/* XXX BAH! BAH! BAH!  There's a nice Typo3-DB-abstraction and I don't know how to use it.  Fix this!
+		$res = mysql_query(TYPO3_db, $query);
+		 */
+		/* SERG: FIXED */
+		$res = $TYPO3_DB->sql_query($query);
 		/* Now we loop for every result we get. */
-		while ($row = mysql_fetch_assoc($res)) {
+		// SERG: FIXED: while ($row = mysql_fetch_assoc($res)) {
+		while ($row = $TYPO3_DB->sql_fetch_assoc($res)) {
 			/* First, we really need to set this object type to "event" so we later know that is one of ours */
-			$row['calendar_object_type'] = "event";
-			
+			$row['calendar_object_type'] = 'event';
 			/*
 			 * Now what we will be doing in this while() loop is the following:
 			 * 
@@ -815,13 +754,13 @@ class tx_calendar_pi1 extends tslib_pibase {
 			/*
 			 * Now fetch all exeptions of this event and save them in the $ex array.
 			 */
-			$where = "(eventtype = 5 AND exception_mm=".$row['uid']." AND start_date < $end)";
+			$where = '(eventtype = 5 AND exception_mm='.$row['uid']." AND start_date < $end)";
 			$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where));
-			$nres = mysql_query($query);
+			// $nres = mysql(TYPO3_db, $query);
+			// SERG
+			$nres = $TYPO3_DB->sql_query($query);
 			$ex = array ();
-			while ($arow = mysql_fetch_assoc($nres))
-				$ex[] = $arow;
-			mysql_free_result($nres);
+			while ($arow = mysql_fetch_assoc($nres)) $ex[] = $arow;
 
 			/* 
 			 * calculate the duration of this event, i.e. how many days this event does last
@@ -970,12 +909,13 @@ class tx_calendar_pi1 extends tslib_pibase {
 					
 					if ($overwrite == null) {
 						/* no exception, just add the original $row */
+						$row['THIS_DAY'] = mktime(0,0,0,$month,$day,$year);
 						$theMatrix[$year][$month][$day][] = $row;
 						$added = true;
 					} else {
 						/* there's an exception.  Go add this instead.  Oh, of course only if we are not supposed to skip it */
-						if ($overwrite['exception_skip'] == 1)
-							break;
+						if ($overwrite['exception_skip'] == 1)	break;
+						$overwrite['THIS_DAY'] = mktime(0,0,0,$month,$day,$year);
 						$theMatrix[$year][$month][$day][] = $overwrite;
 						$added = true;
 					}
@@ -1261,7 +1201,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 			}
 		}
 		
-		mysql_free_result($res);
+		// SERG: no needs: mysql_free_result($res);
 		
 		/*
 		 * Now we have all the recurring events in the $theMatrix array.  However, the regular events
@@ -1272,68 +1212,33 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * The second part of the OR are those events, that started before the interval, but that end in the interval, which is
 		 * after $begin. Those need to be rendered as well, so we need to add them, too.
 		 */
-		$where = "(
-						(start_date + start_time >= $begin AND start_date + start_time < $end)
-					OR
-						(start_date + start_time <= $begin AND end_date + end_time >= $begin)
-					) AND eventtype = 0 ";
+		$where = "((start_date + start_time >= $begin AND start_date + start_time < $end)
+				 OR
+				  (start_date + start_time <= $begin AND end_date + end_time >= $begin)) 
+				 AND 
+				  eventtype = 0";
 
-		$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where));
-		$res = mysql_query($query);
+		$query = $this->cObj->getQuery($this->dbTable, $this->getSelectConf($where.$whereCats.$whereTarget));
+		/* SERG: FIX */
+		$res = $TYPO3_DB->sql_query($query);
 		/* Now we can add those events */
-		while ($row = mysql_fetch_assoc($res)) {
+		while ($row = $TYPO3_DB->sql_fetch_assoc($res)) {
 			/* register object type as ours.  */
-			$row['calendar_object_type'] = "event";
-
+			$row['calendar_object_type'] = 'event';
 			/* Now we are just adding this event to $theMatrix on each day this events belongs to. */
 			$startdate = $row['start_date'];
 			$enddate = $row['end_date'];
-			if ($enddate == 0)
-				$enddate = $startdate;
+			if ($enddate == 0) $enddate = $startdate;
 			for ($i = $startdate; $i <= $enddate; $i = strtotime("+1 day", $i)) {
 				$year = date('Y', $i);
 				$month = date('m', $i);
 				$day = date('d', $i);
-				if (!is_array($theMatrix[$year][$month][$day]))
-					$theMatrix[$year][$month][$day] = array ();
+				if (!is_array($theMatrix[$year][$month][$day]))	$theMatrix[$year][$month][$day] = array ();
+				$row['THIS_DAY'] = $startdate;
 				$theMatrix[$year][$month][$day][] = $row;
 			}
 		}
-		mysql_free_result($res);
-
-		/*
-		 * Now, we have ALL events in the $theMatrix array.
-		 * However, the user might have selected a few targetgroups or categories only,
-		 * so we pass $theMatrix through our filter function that removes all of those unwanted events.
-		 */
-		$theMatrix = $this->filterEvents($theMatrix);
-
 		return $theMatrix;
-	}
-
-	/*
-	 * This function gets a usual event matrix array (sorted by year/month/day) and filters out all
-	 * the unwanted events.
-	 * An event is unwanted if its targetgroup and its category are not in the array of targetgroups and categories
-	 * the functions getCurrentTargetgroups() and getCurrentCategories() returned, respectively.
-	 */
-	function filterEvents($theEvents) {
-		$newEvents = array ();
-		$cats = $this->getCurrentCategories();
-		$targetgroups = $this->getCurrentTargetgroups();
-		foreach (array_keys($theEvents) as $year) {
-			foreach (array_keys($theEvents[$year]) as $month) {
-				foreach (array_keys($theEvents[$year][$month]) as $day) {
-					if (!is_array($newEvents[$year][$month][$year]))
-						$newEvents[$year][$month][$day] = array ();
-					foreach ($theEvents[$year][$month][$day] as $e) {
-						if (in_array($e['category'], $cats) && in_array($e['targetgroup'], $targetgroups))
-							$newEvents[$year][$month][$day][] = $e;
-					}
-				}
-			}
-		}
-		return $newEvents;
 	}
 
 	/*
@@ -1369,12 +1274,12 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		/* If GET vars are set, and we are allowed to use them, adjust the week that is displayed */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$week = intval($this->piVars['f2']);
+			$week = $this->piVars['f2'];
 		else
 			$week = date('W');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = intval($this->piVars['f1']);
+			$year = $this->piVars['f1'];
 		else
 			$year = date('Y');
 
@@ -1383,10 +1288,10 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		/* Now we can take a look at the felxforms config, that maybe tells us to adjust this view by a few weeks */
 		$date_off = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'date_offset');
-		if ($date_off != "") {
+		if ($date_off != '') {
 			$weektime = strtotime($date_off, $weektime);
 			if ($weektime == -1)
-				return "invalid date offset string";
+				return 'invalid date offset string';
 			$week = date('W', $weektime);
 			$year = date('Y', $weektime);
 		}
@@ -1473,38 +1378,51 @@ class tx_calendar_pi1 extends tslib_pibase {
 	 * Called from main(), this renders a month view.
 	 * Fore more info, see the similar functions displayEventFirst8), displayDayFirst8), displayWeekFirst()
 	 */
-	function displayMonthFirst() {
+	function displayMonthFirst() 
+	{
+		global $TYPO3_DB;
 		/* load the template from whereever */
 		$template = $this->loadTemplate();
 
-		/* We might need, if we are allowed to, adjust the "cvurrent" month and year */
-		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$month = intval($this->piVars['f2']);
-		else
-			$month = date('m');
-		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = intval($this->piVars['f1']);
-		else
-			$year = date('Y');
+		/* We might need, if we are allowed to, adjust the "current" month and year */
+		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && $this->piVars['f2'] > 0)
+			 $month = $this->piVars['f2'];
+		else $month = date('m');
+		
+		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && $this->piVars['f1'] > 0)
+			 $year = $this->piVars['f1'];
+		else $year = date('Y');
 
 		/* What's the 1st of this month? */
 		$monthBegin = mktime(0, 0, 0, $month, 1, $year);
+		/* Last day of the month */
+		$monthEnds = mktime(23,59,59, $month+1, 0, $year);
 
 		/* If set in the configuration file, we might need to use an offset to the date used above. */
 		$date_off = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'date_offset');
-		if ($date_off != "") {
+		if ($date_off != '') {
 			$monthBegin = strtotime($date_off, $monthBegin);
 			if ($monthBegin == -1)
 				return "invalid date offset string";
 			$month = date('m', $monthBegin);
 			$year = date('Y', $monthBegin);
 		}
-
+		
 		/*
 		 * We now only need to get all the events in this month and let Typoscript render the month and the events
 		 * for us.  However, the month view might include a few days of the prevoius month, so we expand the range a little bit.
 		 */
-		$eventmatrix = $this->getEventsInRange($year, $month - 1, 20, $year, $month +1, 10);
+		// $eventmatrix = $this->getEventsInRange($year, $month - 1, 20, $year, $month +1, 10);
+		// The event matrix should be inclusive, i.e. include all events from the 0 time at the beginnign and 23:59 ending 
+		/* SERG: +- 1 week */
+		
+		$matrixBegins = getdate(strtotime('-1 week',$monthBegin));
+		$matrixEnds  = getdate(strtotime('+1 week',$monthEnds));
+		
+		$eventmatrix = $this->getEventsInRange(
+			$matrixBegins['year'], $matrixBegins['mon'], $matrixBegins['mday'], 
+			$matrixEnds['year'], $matrixEnds['mon'], $matrixEnds['mday']
+		);
 
 		/* Typo3 API, nothing special */
 		$monthobj = t3lib_div :: makeInstance('tslib_cObj'); // Create new tslib_cObj for our use
@@ -1559,13 +1477,26 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * So, if $monthBegin" is already a Monday (== 1), we set the firstDay (to render) to the month's begin.
 		 * Otherwise we set the Monday of the first week in this month as the first day to render.
 		 */
+
+		if (date('w', $monthBegin) == 0) 
+		{
+			$firstDay = $monthBegin;
+		} 
+		else 
+		{
+			$daysoff = date("w", $monthBegin);
+			$firstDay = strtotime("-$daysoff days", $monthBegin);
+		}
+
+		/* The old code
 		if ($this->getDayOfTheWeek($monthBegin) == 1) {
 			$firstDay = $monthBegin;
 		} else {
 			$daysoff = $this->getDayOfTheWeek($monthBegin) - 1;
 			$firstDay = strtotime("-$daysoff days", $monthBegin);
 		}
-
+		*/
+		
 		/*
 		 * Now we render 4-6 weeks, depending on the month and the year.
 		 * First, we get the template for the week, because we need to pass it to the
@@ -1617,23 +1548,26 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		/* 
 		 * If we need to adjust the "current" date, do so.  Using this you can render e.g. all the next 10 events
-		 * starting at 2005/08/12. 
+		 * starting at 2005/08/12.  (which is much in the future at the time of this writing ;-))
 		 */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f3']))
-			$day = intval($this->piVars['f3']);
+			$day = $this->piVars['f3'];
 		else
 			$day = date('d');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$month = intval($this->piVars['f2']);
+			$month = $this->piVars['f2'];
 		else
 			$month = date('m');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = intval($this->piVars['f1']);
+			$year = $this->piVars['f1'];
 		else
 			$year = date('Y');
-
+		
+		// SERG: ignore F4 as it suppose to work with single event view only
+		unset($this->piVars['f4']);
+		
 		/* $howmany keeps the maximum number of events we shall render.  If none are set, we default to 10 */
 		$howmany = intval($this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'how_many', 's_upcoming'));
 		if ($howmany == 0)
@@ -1687,7 +1621,8 @@ class tx_calendar_pi1 extends tslib_pibase {
 						 * Upcoming view, but might have slipped in due to the getEventsInRange() function just
 						 * adding the whole series of recurring events instead of only adding the events of interest.
 						 */
-						if (mktime(0, 0, 0, $themonth, $theday, $theyear) < $daytime)
+						$cday = mktime(0, 0, 0, $themonth, $theday, $theyear);
+						if ($cday < $daytime)
 							/* jep, this is in the past.  just continue to the next event */
 							continue;
 						/* 
@@ -1696,6 +1631,9 @@ class tx_calendar_pi1 extends tslib_pibase {
 						 */
 						if (is_array($eventmatrix[$theyear][$themonth][$theday])) {
 							$daevents = array_merge($daevents, $eventmatrix[$theyear][$themonth][$theday]);
+							//foreach ($daevents as $cckey => $ccdae) $daevents[$cckey]['THIS_DAY'] = $cday;
+							//echo "<!-- ".print_r($daevents,true)." -->";
+
 						}
 					}
 				}
@@ -1711,10 +1649,11 @@ class tx_calendar_pi1 extends tslib_pibase {
 			 * and can now use the PHP function array_unique(), which will filter out all those doubles for us.
 			 * After that, we have to undo that serialization, of course.
 			 */
-			foreach ($daevents AS $key => $arr)
+			
+			foreach ($daevents as $key => $arr)
 				$daevents[$key] = serialize($arr);
 			$daevents = array_unique($daevents);
-			foreach ($daevents AS $key => $arr)
+			foreach ($daevents as $key => $arr)
 				$daevents[$key] = unserialize($arr);
 
 			/* Having filtered out the doubles, we can now count the new number of events that we found so far */
@@ -1735,8 +1674,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 			$addevent = $this->displayEvent($row, $lConf, $eventTemplate);
 			$theEvents .= $addevent;
 			$n ++;
-			if ($howmany <= $n)
-				break;
+			if ($howmany <= $n) break;
 		}
 
 		/* Finally, we put all those events in our template, and are done */
@@ -1759,7 +1697,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * If not, it must have been uploaded to the uploads directory.  We are going to use it in that case. Fine.
 		 */
 		$defaulttemplate = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'template_use_default', 's_template');
-		if ($defaulttemplate != "") {
+		if ($defaulttemplate != '') {
 			$theFile = "EXT:calendar/templates/".$defaulttemplate;
 		} else {
 			$theFile = 'uploads/tx_calendar/'.$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'template_file', 's_template');
@@ -1814,11 +1752,11 @@ class tx_calendar_pi1 extends tslib_pibase {
 		$this->initdefaults($content, $conf);
 
 		$opt = array ();
-		$selCat = intval($this->piVars['category']);
-		$value = htmlentities($this->pi_linkTP_keepPIvars_url(array ("category" => "")));
+		$selCat = $this->piVars['category'];
+		$value = htmlentities($this->pi_linkTP_keepPIvars_url(array ('category' => '')));
 
 		/* Suck in label for "allCategories" from typoscript */
-		if ($this->conf["allCategoriesMarker"])
+		if ($this->conf['allCategoriesMarker'])
 			$opt[] = '<option value="'.$value.'">'.$this->conf["allCategoriesMarker"].'</option>';
 		else
 			// if unset, use the one from locallang
@@ -1840,7 +1778,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		$opt = array ();
 
-		$selGroup = intval($this->piVars['targetgroup']);
+		$selGroup = $this->piVars['targetgroup'];
 
 		$value = htmlentities($this->pi_linkTP_keepPIvars_url(array ("targetgroup" => "")));
 
@@ -1857,32 +1795,6 @@ class tx_calendar_pi1 extends tslib_pibase {
 			$opt[] = '<option value="'.htmlentities($this->pi_linkTP_keepPIvars_url(array ("targetgroup" => $t['uid']), $this->allowCaching)).'"'. ($selGroup[0] == $t['uid'] ? " SELECTED" : "").'>'.htmlentities($t['title']).'</option>';
 		}
 		return '<select onChange="document.location='."'".$GLOBALS['TSFE']->baseUrl."'".' + this.options[this.selectedIndex].value;">'.implode("", $opt).'</select>';
-	}
-
-
-	/**
-	 * This function returns an array of the UIDs of those categories, that we
-	 * are currently being allowed to display.  If piVars["category"] is set, it's the
-	 * only allowed category, if not, it returns all categories that have been loaded
-	 * into $this->categories earlier based on the FlexForms config. 
-	 */
-	function getCurrentCategories() {
-		if (isset ($this->piVars["category"])) {
-			return array (0 => intval($this->piVars["category"]));
-		} else {
-			return array_keys($this->categories);
-		}
-	}
-
-	/**
-	 * This is the same as getCurrentCategories(), but for targetgroups
-	 */
-	function getCurrentTargetgroups() {
-		if (isset ($this->piVars["targetgroup"])) {
-			return array (0 => intval($this->piVars["targetgroup"]));
-		} else {
-			return array_keys($this->targetgroups);
-		}
 	}
 
 	/**
