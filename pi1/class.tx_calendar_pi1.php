@@ -669,7 +669,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 			foreach (array_keys($theEvents) as $year) {
 				foreach (array_keys($theEvents[$year]) as $month) {
 					foreach (array_keys($theEvents[$year][$month]) as $day) {
-						if (!is_array($theMatrix[$year][$month][$year]))
+						if (!is_array($theMatrix[$year][$month][$day]))
 							$theMatrix[$year][$month][$day] = array ();
 						foreach ($theEvents[$year][$month][$day] as $e) {
 							$theMatrix[$year][$month][$day][] = $e;
