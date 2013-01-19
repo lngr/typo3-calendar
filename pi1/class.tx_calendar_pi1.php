@@ -443,17 +443,17 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * going to display accordingly.  If they are not set, we just use the default, which is the "current" day.
 		 */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f3']))
-			$day = $this->piVars['f3'];
+			$day = intval($this->piVars['f3']);
 		else
 			$day = date('d');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$month = $this->piVars['f2'];
+			$month = intval($this->piVars['f2']);
 		else
 			$month = date('m');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = $this->piVars['f1'];
+			$year = intval($this->piVars['f1']);
 		else
 			$year = date('Y');
 
@@ -1261,12 +1261,12 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		/* If GET vars are set, and we are allowed to use them, adjust the week that is displayed */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$week = $this->piVars['f2'];
+			$week = intval($this->piVars['f2']);
 		else
 			$week = date('W');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = $this->piVars['f1'];
+			$year = intval($this->piVars['f1']);
 		else
 			$year = date('Y');
 
@@ -1373,11 +1373,11 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		/* We might need, if we are allowed to, adjust the "current" month and year */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && $this->piVars['f2'] > 0)
-			 $month = $this->piVars['f2'];
+			 $month = intval($this->piVars['f2']);
 		else $month = date('m');
 		
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && $this->piVars['f1'] > 0)
-			 $year = $this->piVars['f1'];
+			 $year = intval($this->piVars['f1']);
 		else $year = date('Y');
 
 		/* What's the 1st of this month? */
@@ -1538,17 +1538,17 @@ class tx_calendar_pi1 extends tslib_pibase {
 		 * starting at 2005/08/12.  (which is much in the future at the time of this writing ;-))
 		 */
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f3']))
-			$day = $this->piVars['f3'];
+			$day = intval($this->piVars['f3']);
 		else
 			$day = date('d');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f2']))
-			$month = $this->piVars['f2'];
+			$month = intval($this->piVars['f2']);
 		else
 			$month = date('m');
 
 		if (!$this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'ignore_pivars_date') && isset ($this->piVars['f1']))
-			$year = $this->piVars['f1'];
+			$year = intval($this->piVars['f1']);
 		else
 			$year = date('Y');
 		
@@ -1739,7 +1739,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 		$this->initdefaults($content, $conf);
 
 		$opt = array ();
-		$selCat = $this->piVars['category'];
+		$selCat = intval($this->piVars['category']);
 		$value = htmlentities($this->pi_linkTP_keepPIvars_url(array ('category' => '')));
 
 		/* Suck in label for "allCategories" from typoscript */
@@ -1765,7 +1765,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 
 		$opt = array ();
 
-		$selGroup = $this->piVars['targetgroup'];
+		$selGroup = intval($this->piVars['targetgroup']);
 
 		$value = htmlentities($this->pi_linkTP_keepPIvars_url(array ("targetgroup" => "")));
 
