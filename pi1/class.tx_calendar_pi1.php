@@ -141,6 +141,7 @@ class tx_calendar_pi1 extends tslib_pibase {
 		/* Load our Categories and Targetgroups */
 		$this->loadCategories();
 		$this->loadTargetgroups();
+		$this->loadOrganizer();
 	}
 
 	/**
@@ -285,6 +286,42 @@ class tx_calendar_pi1 extends tslib_pibase {
 				case 2 :
 					if (!in_array($row['uid'], $fftargetsarray))
 						$this->targetgroups[$row["uid"]] = $row;
+					break;
+			}
+		}
+	}
+
+	/**
+	 * This does the very same for Organizer as loadCateogires() does for Categores, so please see there.
+	 */
+	function loadOrganizer() {
+		$query = $this->pi_organizersUsed("tx_calendar_organizer");
+		$res = mysql_query($query);
+		if (mysql_errno()) {
+			die(mysql_error());
+		}
+		$organizerMode = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'organizerMode', 's_category');
+		$fftargets = $this->pi_getFFvalue($this->cObj->data['pi_flexform'], 'organizerSelection', 's_category');
+		$fftargetsarray = preg_split("/,/", $fftargets);
+
+		if ($organizerMode == 0) {
+			$this->organizer[0] = array ('uid' => 0, 'title' => '[no organizer]',);
+		}
+
+		while ($row = mysql_fetch_assoc($res)) {
+			switch ($organizerMode) {
+				case 0 :
+					// add all
+					$this->organizer[$row["uid"]] = $row;
+					break;
+				case 1 :
+					if (in_array($row['uid'], $fftargetsarray)) {
+						$this->organizer[$row["uid"]] = $row;
+					}
+					break;
+				case 2 :
+					if (!in_array($row['uid'], $fftargetsarray))
+						$this->organizer[$row["uid"]] = $row;
 					break;
 			}
 		}
@@ -1321,14 +1358,26 @@ class tx_calendar_pi1 extends tslib_pibase {
 		$newEvents = array ();
 		$cats = $this->getCurrentCategories();
 		$targetgroups = $this->getCurrentTargetgroups();
-		foreach (array_keys($theEvents) as $year) {
-			foreach (array_keys($theEvents[$year]) as $month) {
-				foreach (array_keys($theEvents[$year][$month]) as $day) {
+		$organizer = $this->getCurrentOrganizer();
+		foreach (array_keys($theEvents) as $year)
+		{
+			foreach (array_keys($theEvents[$year]) as $month)
+			{
+				foreach (array_keys($theEvents[$year][$month]) as $day)
+				{
 					if (!is_array($newEvents[$year][$month][$year]))
+					{
 						$newEvents[$year][$month][$day] = array ();
-					foreach ($theEvents[$year][$month][$day] as $e) {
-						if (in_array($e['category'], $cats) && in_array($e['targetgroup'], $targetgroups))
-							$newEvents[$year][$month][$day][] = $e;
+					}
+					foreach ($theEvents[$year][$month][$day] as $e)
+					{
+						if (in_array($e['category'], $cats) && in_array($e['targetgroup'], $targetgroups) )
+						{
+							if( empty($organizer) || in_array($e['organizer_mm'], $organizer) )
+							{
+								$newEvents[$year][$month][$day][] = $e;
+							}
+						}
 					}
 				}
 			}
@@ -1882,6 +1931,17 @@ class tx_calendar_pi1 extends tslib_pibase {
 			return array (0 => intval($this->piVars["targetgroup"]));
 		} else {
 			return array_keys($this->targetgroups);
+		}
+	}
+
+	/**
+	 * This is the same as getCurrentCategories(), but for organizer
+	 */
+	function getCurrentOrganizer() {
+		if (isset ($this->piVars["organizer"])) {
+			return array (0 => intval($this->piVars["organizer"]));
+		} else {
+			return array_keys($this->organizer);
 		}
 	}
 

@@ -89,6 +89,14 @@ plugin.tx_calendar_pi1 {
 				conf.tx_calendar_targetgroup.field = title
 			}
 
+			EVENT_ORGANIZER = RECORDS
+			EVENT_ORGANIZER {
+				source.field = organizer
+				tables = tx_calendar_organizer
+				conf.tx_calendar_organizer = TEXT
+				conf.tx_calendar_organizer.field = title
+			}
+
 			EVENT_TARGETGROUP_IMAGE = RECORDS
 			EVENT_TARGETGROUP_IMAGE {
 				source.field = targetgroup
